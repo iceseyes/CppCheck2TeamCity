@@ -43,14 +43,21 @@ def load_errortypes_xml(file):
             return parser
 
 
-def decode_attrs(el):
-    data = {}
-    for k, v in el.attrib.items():
-        data[k] = v.replace('|', '||') \
+def tc_escape(v):
+    return v.replace('|', '||') \
             .replace("'", "|'") \
             .replace("[", "|[") \
             .replace("]", "|]") \
             .replace("\\012", '|n')
+
+
+def escape(v):
+    return tc_escape(v).replace("\n", "|n").replace("\r", "")
+
+def decode_attrs(el):
+    data = {}
+    for k, v in el.attrib.items():
+        data[k] = tc_escape(v)
 
         if len(data[k]) > 4000:
             data[k] = data[k][:396] + "..."
@@ -58,7 +65,10 @@ def decode_attrs(el):
     return data
 
 
-def format_inspection(el):
+def format_inspection(el, root, exclude):
+    if root and root[-1] != "/":
+        root += "/"
+
     if el.tag == "error":
         data = decode_attrs(el)
 
@@ -67,7 +77,16 @@ def format_inspection(el):
                 data["file"] = child.attrib["file"]
                 data["line"] = child.attrib["line"]
 
-                print(TC_INSPECTION_MSG.format(**data))
+                with open(data["file"], "rb") as file:
+                    for i, line in enumerate(file):
+                        if (i+1) == int(data['line']):
+                            data["msg"] += "|n|n" + escape(line.decode()) + "|n"
+                            break
+
+                if not root or data["file"].startswith(root) and (
+                        not exclude or not data["file"].startswith(os.path.join(root, exclude))):
+                    data["file"] = data["file"].replace(root, "")
+                    print(TC_INSPECTION_MSG.format(**data))
 
 
 def format_inspection_type(event, el):
@@ -88,10 +107,10 @@ def print_types():
         format_inspection_type(event, el)
 
 
-def stream(xmlfile):
+def stream(xmlfile, root, exclude):
     xfile = ET.parse(xmlfile)
     for el in xfile.iter("error"):
-        format_inspection(el)
+        format_inspection(el, root, exclude)
 
 
 def parse_args():
@@ -102,6 +121,8 @@ def parse_args():
     parser.add_argument("--xmlfile", "-f",
                         help="XML CppCheck output file",
                         default="cppcheck.xml")
+    parser.add_argument("--root", "-r", help="project root path", default="")
+    parser.add_argument("--exclude", "-e", help="exclude file by prefix", default="")
 
     return parser.parse_args()
 
@@ -112,7 +133,7 @@ def main():
     if args.wtypes:
         print_types()
 
-    stream(args.xmlfile)
+    stream(args.xmlfile, args.root, args.exclude)
     return 0
 
 
